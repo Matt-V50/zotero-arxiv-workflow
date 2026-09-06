@@ -9,43 +9,152 @@ import { simplifyUpdateStatus, sortByStatusPriority } from "./status";
 
 type ReportProgress = (status: UpdateStatus, msg?: string) => void;
 
+async function translateWebURL(
+  url: string,
+  libraryID: number,
+  collections: number[],
+): Promise<Zotero.Item | false> {
+  ztoolkit.log(`Trying Web Translator for ${url}`);
+
+  const xhr = await requestBounded(url, {
+    timeout: 30000,
+    responseType: "document",
+  });
+
+  const finalURL = xhr.responseURL || url;
+
+  ztoolkit.log(`Web URL resolved to ${finalURL}`);
+
+  const doc = Zotero.HTTP.wrapDocument(xhr.response as Document, finalURL);
+
+  const translate = new Zotero.Translate.Web();
+  translate.setDocument(doc);
+
+  const translators = await translate.getTranslators();
+
+  if (!translators || translators.length === 0) {
+    throw new Error(`No Web Translator found for ${finalURL}`);
+  }
+
+  ztoolkit.log(
+    `Web Translators found for ${finalURL}: ${translators
+      .map((translator: any) => translator.label || translator.translatorID)
+      .join(", ")}`,
+  );
+
+  translate.setTranslator(translators);
+
+  const items = await translate.translate({
+    libraryID,
+    collections,
+    saveAttachments: false,
+  });
+
+  if (items.length === 0) return false;
+
+  return items[0];
+}
+
+async function translateDOI(
+  doi: string,
+  libraryID: number,
+  collections: number[],
+): Promise<Zotero.Item | false> {
+  ztoolkit.log(`Falling back to DOI Search Translator for ${doi}`);
+
+  const translate = new Zotero.Translate.Search();
+
+  translate.setIdentifier({ DOI: doi });
+
+  const translators = await translate.getTranslators();
+
+  if (!translators || translators.length === 0) {
+    return false;
+  }
+
+  translate.setTranslator(translators);
+
+  const items = await translate.translate({
+    libraryID,
+    collections,
+    saveAttachments: false,
+  });
+
+  if (items.length === 0) return false;
+
+  return items[0];
+}
+
 async function createItemByZotero(
   paper: PaperIdentifier,
   collections: number[],
 ): Promise<Zotero.Item | false> {
-  let translate;
-  if (paper.doi) {
-    translate = new Zotero.Translate.Search();
-    translate.setIdentifier({ DOI: paper.doi });
-    const translators = await translate.getTranslators();
-    translate.setTranslator(translators);
-  } else if (paper.url) {
-    translate = new Zotero.Translate.Web();
-    // Imports can re-hit a host (e.g. the DBLP BibTeX view used
-    // for OpenReview records), so they share the per-host queue.
-    const xhr = await requestBounded(paper.url, {
-      timeout: 30000,
-      responseType: "document",
-    });
-    const doc = Zotero.HTTP.wrapDocument(
-      xhr.response as Document,
-      xhr.responseURL || paper.url,
-    );
-    translate.setDocument(doc);
-    const translators = await translate.getTranslators();
-    translate.setTranslator(translators);
-  }
   const pane = Zotero.getActiveZoteroPane()!;
+
   const libraryID = pane.getSelectedLibraryIDs
     ? pane.getSelectedLibraryIDs()[0]
     : pane.getSelectedLibraryID();
-  const items = await translate.translate({
-    libraryID,
-    collections,
-    saveAttachments: false, // we will do it later
-  });
-  if (items.length === 0) return false;
-  return items[0];
+
+  // ------------------------------------------------------------
+  // DOI path
+  //
+  // Priority 1:
+  // DOI -> official publisher landing page -> Web Translator
+  //
+  // Fallback:
+  // DOI -> Zotero Search Translator
+  // ------------------------------------------------------------
+
+  if (paper.doi) {
+    const doi = paper.doi
+      .trim()
+      .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "");
+
+    const doiURL = encodeURI(`https://doi.org/${doi}`);
+
+    ztoolkit.log(`Trying publisher Web Translator first for DOI ${doi}`);
+
+    try {
+      const item = await translateWebURL(doiURL, libraryID, collections);
+
+      if (item) {
+        ztoolkit.log(`Publisher Web Translator succeeded for DOI ${doi}`);
+
+        return item;
+      }
+
+      ztoolkit.log(
+        `Publisher Web Translator returned no items for DOI ${doi}; falling back to DOI Search`,
+      );
+    } catch (err) {
+      // Failure here is deliberately non-fatal.
+      //
+      // Examples:
+      // - publisher blocks automated requests
+      // - DOI resolver timeout
+      // - page has no Zotero Web Translator
+      // - Web Translator itself fails
+      //
+      // In all of these cases, retain the existing DOI lookup
+      // behaviour as a fallback.
+      ztoolkit.log(
+        `Publisher Web Translator failed for DOI ${doi}; falling back to DOI Search`,
+      );
+      ztoolkit.log(err);
+    }
+
+    return translateDOI(doi, libraryID, collections);
+  }
+
+  // ------------------------------------------------------------
+  // Existing URL path
+  // ------------------------------------------------------------
+
+  if (paper.url) {
+    return translateWebURL(paper.url, libraryID, collections);
+  }
+
+  return false;
 }
 
 /**
@@ -161,11 +270,17 @@ export class UpdateManager {
       // Download published version
       reportProgress("downloading-metadata");
       const pane = Zotero.getActiveZoteroPane();
-      const collections = pane?.getSelectedCollections
+      const rawCollections = pane?.getSelectedCollections
         ? pane.getSelectedCollections(true)
         : pane?.getSelectedCollection
           ? [pane.getSelectedCollection(true)]
           : [];
+
+      const collections = (
+        Array.isArray(rawCollections) ? rawCollections : []
+      ).filter(
+        (id): id is number => typeof id === "number" && Number.isInteger(id),
+      );
       const journalItem = await this.createItem(paper, collections);
       if (!journalItem) return reportProgress("download-error");
       journalItem.saveTx();
