@@ -26,14 +26,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AllanChain/zotero-arxiv-workflow.git"
+    "url": "git+https://github.com/Matt-V50/zotero-arxiv-workflow.git"
   },
   "author": "Allan Chain",
   "license": "AGPL-3.0-or-later",
   "bugs": {
-    "url": "https://github.com/AllanChain/zotero-arxiv-workflow/issues"
+    "url": "https://github.com/Matt-V50/zotero-arxiv-workflow/issues"
   },
-  "homepage": "https://github.com/AllanChain/zotero-arxiv-workflow#readme",
+  "homepage": "https://github.com/Matt-V50/zotero-arxiv-workflow#readme",
   "dependencies": {
     "diff": "^9.0.0",
     "p-queue": "^8.1.1",
