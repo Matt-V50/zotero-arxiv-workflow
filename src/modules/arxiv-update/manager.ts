@@ -9,6 +9,27 @@ import { simplifyUpdateStatus, sortByStatusPriority } from "./status";
 
 type ReportProgress = (status: UpdateStatus, msg?: string) => void;
 
+function supplementConferenceMetadata(item: Zotero.Item, doc: Document) {
+  const itemType = Zotero.ItemTypes.getName(item.itemTypeID);
+
+  if (itemType !== "conferencePaper") return;
+
+  if (item.getField("conferenceName")) return;
+
+  const conferenceName = doc
+    .querySelector('meta[name="citation_conference_title"]')
+    ?.getAttribute("content")
+    ?.trim();
+
+  if (!conferenceName) return;
+
+  item.setField("conferenceName", conferenceName);
+
+  ztoolkit.log(
+    `Supplemented conference name from publisher metadata: ${conferenceName}`,
+  );
+}
+
 async function translateWebURL(
   url: string,
   libraryID: number,
@@ -36,11 +57,7 @@ async function translateWebURL(
     throw new Error(`No Web Translator found for ${finalURL}`);
   }
 
-  ztoolkit.log(
-    `Web Translators found for ${finalURL}: ${translators
-      .map((translator: any) => translator.label || translator.translatorID)
-      .join(", ")}`,
-  );
+  ztoolkit.log(`Found ${translators.length} Web Translator(s) for ${finalURL}`);
 
   translate.setTranslator(translators);
 
@@ -52,7 +69,11 @@ async function translateWebURL(
 
   if (items.length === 0) return false;
 
-  return items[0];
+  const item = items[0];
+
+  supplementConferenceMetadata(item, doc);
+
+  return item;
 }
 
 async function translateDOI(
