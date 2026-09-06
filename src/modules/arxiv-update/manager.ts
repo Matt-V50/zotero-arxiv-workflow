@@ -14,6 +14,7 @@ function supplementConferenceMetadata(item: Zotero.Item, doc: Document) {
 
   if (itemType !== "conferencePaper") return;
 
+  // Do not overwrite metadata already provided by Zotero.
   if (item.getField("conferenceName")) return;
 
   const conferenceName = doc
@@ -27,6 +28,141 @@ function supplementConferenceMetadata(item: Zotero.Item, doc: Document) {
 
   ztoolkit.log(
     `Supplemented conference name from publisher metadata: ${conferenceName}`,
+  );
+}
+
+function getOpenReviewForumID(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+
+    if (
+      parsed.hostname !== "openreview.net" &&
+      !parsed.hostname.endsWith(".openreview.net")
+    ) {
+      return undefined;
+    }
+
+    return parsed.searchParams.get("id") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getOpenReviewContentValue(field: unknown): unknown {
+  if (field && typeof field === "object" && "value" in field) {
+    return (field as { value?: unknown }).value;
+  }
+
+  return field;
+}
+
+async function getOpenReviewNote(forumID: string): Promise<
+  | {
+      content?: Record<string, unknown>;
+    }
+  | undefined
+> {
+  // OpenReview API v2 is preferred.
+  // Older venues may still only be available through API v1.
+  const endpoints = [
+    `https://api2.openreview.net/notes?id=${encodeURIComponent(forumID)}`,
+    `https://api.openreview.net/notes?id=${encodeURIComponent(forumID)}`,
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      ztoolkit.log(`Trying OpenReview API: ${endpoint}`);
+
+      const xhr = await requestBounded(endpoint, {
+        timeout: 30000,
+        responseType: "json",
+      });
+
+      const data = xhr.response as {
+        notes?: Array<{
+          content?: Record<string, unknown>;
+        }>;
+      };
+
+      const note = data.notes?.[0];
+
+      if (note) {
+        ztoolkit.log(`OpenReview API returned metadata for ${forumID}`);
+
+        return note;
+      }
+    } catch (err) {
+      ztoolkit.log(`OpenReview API request failed: ${endpoint}`);
+      ztoolkit.log(err);
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeOpenReviewConferenceName(
+  venue: string | undefined,
+  venueID: string | undefined,
+): string | undefined {
+  // OpenReview's venue field is not always canonical.
+  // venueID is much more stable for well-known venues.
+
+  if (venueID?.startsWith("ICLR.cc/")) {
+    return "International Conference on Learning Representations";
+  }
+
+  // Generic fallback.
+  if (venue?.trim()) {
+    return venue.trim();
+  }
+
+  return undefined;
+}
+
+async function supplementOpenReviewConferenceMetadata(
+  item: Zotero.Item,
+  url: string,
+) {
+  const forumID = getOpenReviewForumID(url);
+
+  if (!forumID) return;
+
+  const itemType = Zotero.ItemTypes.getName(item.itemTypeID);
+
+  if (itemType !== "conferencePaper") {
+    ztoolkit.log(
+      `OpenReview item is not conferencePaper (${itemType}); skipping conference metadata supplementation`,
+    );
+    return;
+  }
+
+  // Never overwrite good metadata from Zotero translator.
+  if (item.getField("conferenceName")) return;
+
+  const note = await getOpenReviewNote(forumID);
+
+  if (!note?.content) return;
+
+  const venueValue = getOpenReviewContentValue(note.content.venue);
+
+  const venueIDValue = getOpenReviewContentValue(note.content.venueid);
+
+  const venue = typeof venueValue === "string" ? venueValue : undefined;
+
+  const venueID = typeof venueIDValue === "string" ? venueIDValue : undefined;
+
+  ztoolkit.log(
+    `OpenReview venue metadata: venue="${venue}", venueID="${venueID}"`,
+  );
+
+  const conferenceName = normalizeOpenReviewConferenceName(venue, venueID);
+
+  if (!conferenceName) return;
+
+  item.setField("conferenceName", conferenceName);
+
+  ztoolkit.log(
+    `Supplemented conference name from OpenReview: ${conferenceName}`,
   );
 }
 
@@ -49,6 +185,7 @@ async function translateWebURL(
   const doc = Zotero.HTTP.wrapDocument(xhr.response as Document, finalURL);
 
   const translate = new Zotero.Translate.Web();
+
   translate.setDocument(doc);
 
   const translators = await translate.getTranslators();
@@ -71,7 +208,23 @@ async function translateWebURL(
 
   const item = items[0];
 
+  // First try metadata embedded directly in the
+  // publisher page, e.g. Springer.
   supplementConferenceMetadata(item, doc);
+
+  // OpenReview requires special handling because
+  // its forum page may be protected by browser
+  // verification and older venues may use API v1.
+  //
+  // Use the original URL first because finalURL may
+  // have become an OpenReview challenge URL.
+  await supplementOpenReviewConferenceMetadata(item, url);
+
+  // In case the original URL was a DOI or redirect
+  // but the final landing page is OpenReview.
+  if (!item.getField("conferenceName") && finalURL !== url) {
+    await supplementOpenReviewConferenceMetadata(item, finalURL);
+  }
 
   return item;
 }
