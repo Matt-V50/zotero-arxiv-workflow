@@ -198,6 +198,7 @@ export class arXivMerge {
     }
 
     if (citationKey) {
+      journalJSON.citationKey = citationKey;
       journalJSON.extra = Zotero.Utilities.Internal.combineExtraFields(
         (journalJSON.extra ?? "") as string,
         // @ts-expect-error key not listed in type
