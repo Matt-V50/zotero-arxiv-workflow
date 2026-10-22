@@ -166,14 +166,28 @@ This function assumes that the argument is a PDF attachment. Currently, no check
 
 ### 📄 Search for updated version of a preprint
 
-If you have a preprint item and want to find if it has been published in a journal or updated on the preprint server, you can right click on the preprint item and select "Update arXiv paper". Supported preprint servers include [arXiv](https://arxiv.org), [bioRxiv](https://www.biorxiv.org), [medRxiv](https://www.medrxiv.org), [chemRxiv](https://chemrxiv.org), and [PsyArxiv](https://osf.io). This will search:
+If you have a preprint item and want to find if it has been published in a
+journal or updated on the preprint server, right-click the preprint and select
+"Update arXiv paper". Supported preprint servers include [arXiv](https://arxiv.org),
+[bioRxiv](https://www.biorxiv.org), [medRxiv](https://www.medrxiv.org),
+[chemRxiv](https://chemrxiv.org), and [PsyArxiv](https://osf.io). It tries
+these sources in order, stopping at the first match:
 
-1. Published versions by trying:
-   1. Related DOI from the preprint server ([arXiv](https://arxiv.org), [bioRxiv](https://www.biorxiv.org), [medRxiv](https://www.medrxiv.org), [chemRxiv](https://chemrxiv.org)), which may be updated if the paper got published
-   2. [Semantic Scholar](https://www.semanticscholar.org) API
-   3. [DBLP](https://dblp.org) API
-   4. [PubMed](https://pubmed.ncbi.nlm.nih.gov) API
-2. If no published version found, the plugin will search [arXiv](https://arxiv.org) for updated versions
+1. Related DOI from the preprint server ([arXiv](https://arxiv.org),
+   [bioRxiv](https://www.biorxiv.org), [medRxiv](https://www.medrxiv.org),
+   [chemRxiv](https://chemrxiv.org)), which may be updated if the paper got
+   published
+2. [Semantic Scholar](https://www.semanticscholar.org) API
+3. [DBLP](https://dblp.org) API
+4. [PubMed](https://pubmed.ncbi.nlm.nih.gov) API
+5. [arXiv](https://arxiv.org) PDF version check
+6. [OpenAlex](https://openalex.org) API
+7. [Crossref](https://www.crossref.org) API
+
+OpenAlex and Crossref are fallback sources. They only return a DOI when the
+record has a matching title, a compatible first author when available, and
+metadata identifying it as a published work. Each source can be enabled or
+disabled in the plugin preferences.
 
 > [!Note]
 >

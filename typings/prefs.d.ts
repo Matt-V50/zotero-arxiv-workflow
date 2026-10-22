@@ -18,6 +18,8 @@ declare namespace _ZoteroTypes {
       "updateSource.dblp": boolean;
       "updateSource.pubmed": boolean;
       "updateSource.arXiv": boolean;
+      "updateSource.openAlex": boolean;
+      "updateSource.crossref": boolean;
       "mergePreferJournalPDF": boolean;
       "merge.reservedKeys": string;
       "merge.arXivExtra": boolean;

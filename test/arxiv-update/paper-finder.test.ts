@@ -552,6 +552,130 @@ describe("paper-finder", function () {
     });
   });
 
+  describe("openAlex", function () {
+    it("finds an exact published work by title and first author", async function () {
+      const item = await createPreprintItem(
+        "https://arxiv.org/abs/2403.15530",
+        {
+          title:
+            "Pixel-GS: Density Control with Pixel-aware Gradient for 3D Gaussian Splatting",
+          authorLastName: "Zhang",
+        },
+      );
+      const { fetcher, calls } = createFetcher({
+        fetchJSON: async () => ({
+          results: [
+            {
+              doi: "https://doi.org/10.1007/978-3-031-72655-2_19",
+              title:
+                "Pixel-GS: Density Control with Pixel-Aware Gradient for 3D Gaussian Splatting",
+              type: "conference-paper",
+              primary_location: { is_published: true },
+              authorships: [{ author: { display_name: "Zheng Zhang" } }],
+            },
+          ],
+        }),
+      });
+
+      const paper = await new PaperFinder(item, fetcher).openAlex();
+
+      assert.deepEqual(paper, {
+        doi: "10.1007/978-3-031-72655-2_19",
+        title: "Published PDF",
+      });
+      assert.match(calls[0].url, /^https:\/\/api\.openalex\.org\/works\?/);
+      assert.include(calls[0].url, "search=");
+    });
+
+    it("rejects arXiv DOI and unpublished records", async function () {
+      const item = await createPreprintItem();
+      const { fetcher } = createFetcher({
+        fetchJSON: async () => ({
+          results: [
+            {
+              doi: "10.48550/arXiv.1234.5678",
+              title: "Test paper",
+              type: "preprint",
+              primary_location: { is_published: false },
+            },
+          ],
+        }),
+      });
+
+      assert.isUndefined(await new PaperFinder(item, fetcher).openAlex());
+    });
+  });
+
+  describe("crossref", function () {
+    it("finds a published work by exact title and first author", async function () {
+      const item = await createPreprintItem(
+        "https://arxiv.org/abs/2403.15530",
+        {
+          title:
+            "Pixel-GS: Density Control with Pixel-aware Gradient for 3D Gaussian Splatting",
+          authorLastName: "Zhang",
+        },
+      );
+      const { fetcher, calls } = createFetcher({
+        fetchJSON: async () => ({
+          message: {
+            items: [
+              {
+                DOI: "10.1007/978-3-031-72655-2_19",
+                title: [
+                  "Pixel-GS: Density Control with\u00a0Pixel-Aware Gradient for\u00a03D Gaussian Splatting",
+                ],
+                type: "book-chapter",
+                author: [{ family: "Zhang" }],
+              },
+            ],
+          },
+        }),
+      });
+
+      const paper = await new PaperFinder(item, fetcher).crossref();
+
+      assert.deepEqual(paper, {
+        doi: "10.1007/978-3-031-72655-2_19",
+        title: "Published PDF",
+      });
+      assert.match(calls[0].url, /^https:\/\/api\.crossref\.org\/works\?/);
+      assert.include(calls[0].url, "query.bibliographic=");
+    });
+
+    it("rejects mismatched titles and preprint records", async function () {
+      const item = await createPreprintItem(undefined, {
+        authorLastName: "Zhang",
+      });
+      const { fetcher } = createFetcher({
+        fetchJSON: async () => ({
+          message: {
+            items: [
+              {
+                DOI: "10.1000/wrong-author",
+                title: ["Test paper"],
+                type: "journal-article",
+                author: [{ family: "Other" }],
+              },
+              {
+                DOI: "10.1000/preprint",
+                title: ["Test paper"],
+                type: "posted-content",
+              },
+              {
+                DOI: "10.1000/wrong-title",
+                title: ["Different paper"],
+                type: "journal-article",
+              },
+            ],
+          },
+        }),
+      });
+
+      assert.isUndefined(await new PaperFinder(item, fetcher).crossref());
+    });
+  });
+
   describe("arXivPDF", function () {
     it("returns the download candidate when there is no local PDF", async function () {
       const item = await createPreprintItem("https://arxiv.org/abs/1234.5678");
@@ -677,8 +801,45 @@ describe("paper-finder", function () {
       assert.isUndefined(await new PaperFinder(item, fetcher).find());
       assert.deepEqual(
         calls.map((c) => c.type),
-        ["text", "json", "json", "json", "text"],
+        ["text", "json", "json", "json", "text", "json", "json"],
       );
+    });
+
+    it("tries OpenAlex and Crossref after existing sources", async function () {
+      setPluginPref("updateSource.doi", false);
+      setPluginPref("updateSource.semanticScholar", false);
+      setPluginPref("updateSource.dblp", false);
+      setPluginPref("updateSource.pubmed", false);
+      setPluginPref("updateSource.arXiv", false);
+      setPluginPref("updateSource.openAlex", true);
+      setPluginPref("updateSource.crossref", true);
+      const item = await createPreprintItem();
+      const { fetcher, calls } = createFetcher({
+        fetchJSON: async (url) =>
+          url.includes("openalex")
+            ? { results: [] }
+            : {
+                message: {
+                  items: [
+                    {
+                      DOI: "10.1000/published",
+                      title: ["Test paper"],
+                      type: "journal-article",
+                    },
+                  ],
+                },
+              },
+      });
+
+      const paper = await new PaperFinder(item, fetcher).find();
+
+      assert.deepEqual(paper, {
+        doi: "10.1000/published",
+        title: "Published PDF",
+      });
+      assert.lengthOf(calls, 2);
+      assert.match(calls[0].url, /api\.openalex\.org/);
+      assert.match(calls[1].url, /api\.crossref\.org/);
     });
   });
 });

@@ -14,6 +14,8 @@ export const UPDATE_SOURCES = [
   "dblp",
   "pubmed",
   "arXiv",
+  "openAlex",
+  "crossref",
 ] as const;
 
 /** Re-enable every update source and clear per-source credentials. */

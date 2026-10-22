@@ -15,6 +15,26 @@ const KNOWN_PREPRINT_SERVERS = {
   psyarxiv: "osf.io",
 };
 
+const OPEN_ALEX_PUBLISHED_TYPES = new Set([
+  "article",
+  "book",
+  "book-chapter",
+  "conference-paper",
+  "edited-book",
+  "monograph",
+]);
+
+const CROSSREF_PUBLISHED_TYPES = new Set([
+  "book",
+  "book-chapter",
+  "edited-book",
+  "journal-article",
+  "monograph",
+  "proceedings-article",
+  "reference-book",
+  "report",
+]);
+
 export function isKnownPreprintURL(url: string): boolean {
   const urlHost = new URL(url).hostname;
   return Object.values(KNOWN_PREPRINT_SERVERS).includes(urlHost);
@@ -23,6 +43,39 @@ export function isKnownPreprintURL(url: string): boolean {
 export function matchTitle(base: string, target: any): boolean {
   if (typeof target !== "string") return false;
   return base.toLowerCase().trim() === target.toLowerCase().trim();
+}
+
+function normalizeMetadataText(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function matchesTitleAndFirstAuthor(
+  title: string,
+  resultTitle: unknown,
+  firstAuthor: string | undefined,
+  resultFirstAuthor: unknown,
+): boolean {
+  if (
+    typeof resultTitle !== "string" ||
+    normalizeMetadataText(title) !== normalizeMetadataText(resultTitle)
+  ) {
+    return false;
+  }
+  if (!firstAuthor || typeof resultFirstAuthor !== "string") return true;
+  return normalizeMetadataText(resultFirstAuthor)
+    .split(/[\s,]+/)
+    .includes(normalizeMetadataText(firstAuthor));
+}
+
+function publishedDOI(doi: unknown): string | undefined {
+  if (typeof doi !== "string") return undefined;
+  const normalized = doi
+    .trim()
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+    .replace(/^doi:\s*/i, "");
+  return normalized && !/^10\.48550\/arxiv\./i.test(normalized)
+    ? normalized
+    : undefined;
 }
 
 // Extract the arXiv version (e.g. 3 from "arXiv:1234.5678v3") embedded in a
@@ -78,6 +131,8 @@ export class PaperFinder {
       getPref("updateSource.dblp") && this.dblp.bind(this),
       getPref("updateSource.pubmed") && this.pubMed.bind(this),
       getPref("updateSource.arXiv") && this.arXivPDF.bind(this),
+      getPref("updateSource.openAlex") && this.openAlex.bind(this),
+      getPref("updateSource.crossref") && this.crossref.bind(this),
     ];
     for (const finder of finders) {
       if (!finder) continue;
@@ -227,6 +282,65 @@ export class PaperFinder {
         return { doi: idInfo.value, title: "Published PDF" };
       }
     }
+    return undefined;
+  }
+
+  async openAlex(): Promise<PaperIdentifier | undefined> {
+    const firstAuthor = this.item.getCreators()[0]?.lastName;
+    const query = firstAuthor ? `${this.title} ${firstAuthor}` : this.title;
+    const url =
+      "https://api.openalex.org/works?" +
+      `search=${encodeURIComponent(query)}&per-page=10&select=doi,title,type,authorships,primary_location`;
+    const json = await this.fetch.fetchJSON(url);
+    const results = json?.results ?? [];
+    for (const result of results) {
+      const doi = publishedDOI(result?.doi);
+      if (
+        !doi ||
+        !OPEN_ALEX_PUBLISHED_TYPES.has(result?.type) ||
+        result?.primary_location?.is_published !== true ||
+        !matchesTitleAndFirstAuthor(
+          this.title,
+          result?.title,
+          firstAuthor,
+          result?.authorships?.[0]?.author?.display_name,
+        )
+      ) {
+        continue;
+      }
+      ztoolkit.log(`OpenAlex matched "${this.title}" via DOI ${doi}`);
+      return { doi, title: "Published PDF" };
+    }
+    ztoolkit.log(`No published version found on OpenAlex for "${this.title}"`);
+    return undefined;
+  }
+
+  async crossref(): Promise<PaperIdentifier | undefined> {
+    const firstAuthor = this.item.getCreators()[0]?.lastName;
+    const query = firstAuthor ? `${this.title} ${firstAuthor}` : this.title;
+    const url =
+      "https://api.crossref.org/works?" +
+      `query.bibliographic=${encodeURIComponent(query)}&rows=10`;
+    const json = await this.fetch.fetchJSON(url);
+    const results = json?.message?.items ?? [];
+    for (const result of results) {
+      const doi = publishedDOI(result?.DOI);
+      if (
+        !doi ||
+        !CROSSREF_PUBLISHED_TYPES.has(result?.type) ||
+        !matchesTitleAndFirstAuthor(
+          this.title,
+          result?.title?.[0],
+          firstAuthor,
+          result?.author?.[0]?.family,
+        )
+      ) {
+        continue;
+      }
+      ztoolkit.log(`Crossref matched "${this.title}" via DOI ${doi}`);
+      return { doi, title: "Published PDF" };
+    }
+    ztoolkit.log(`No published version found on Crossref for "${this.title}"`);
     return undefined;
   }
 
