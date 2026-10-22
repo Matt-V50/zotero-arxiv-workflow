@@ -156,6 +156,7 @@ export class arXivMerge {
     ) {
       return;
     }
+    const citationKey = preprintItem.getField("citationKey");
     preprintItem.setType(publishedItem.itemTypeID);
     const journalJSON = publishedItem.toJSON();
     const preprintJSON = preprintItem.toJSON();
@@ -165,6 +166,8 @@ export class arXivMerge {
       getPref("merge.reservedKeys") ??
       "collections,dateAdded,dateModified,key,tags,relations"
     ).split(",");
+    // Keep Zotero's stable item identity for plugin data indexed by item.key.
+    if (!reservedKeys.includes("key")) reservedKeys.push("key");
     reservedKeys.forEach((field) => {
       if (Object.hasOwn(preprintJSON, field)) {
         // @ts-expect-error TypeScript does not treat hasOwn as type guards
@@ -194,20 +197,15 @@ export class arXivMerge {
       if (notes) journalJSON.extra += "\n" + notes;
     }
 
-    /* Avoid citation key collision after preprint item updates (say year)
-     * For example, no collision:
-     * - Published item: li_wang_2024-1
-     * - Preprint item: li_wang_2024
-     * Thing will work without problem.
-     * Collision:
-     * - Published item: li_wang_2024
-     * - Preprint item: li_wang_2023
-     * If we do nothing, after `preprintItem.saveTx`, the citation key will update
-     * to li_wang_2024-1, which is something we don't want. One approach is to fix
-     * the citation key for the preprint item. But it involves working with BBT.
-     * The workaround here is to set a random citation key for the published item.
-     * TODO: What if the user wants to keep the citation key (not fixed in BBT)?
-     */
+    if (citationKey) {
+      journalJSON.extra = Zotero.Utilities.Internal.combineExtraFields(
+        (journalJSON.extra ?? "") as string,
+        // @ts-expect-error key not listed in type
+        new Map([["Citation Key", citationKey]]),
+      );
+    }
+
+    // Keep the preprint's citation key fixed while changing its bibliographic data.
     const tempExtra = Zotero.Utilities.Internal.combineExtraFields(
       (journalJSON.extra ?? "") as string,
       // @ts-expect-error key not listed in type

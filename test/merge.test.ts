@@ -32,6 +32,8 @@ describe("merge", function () {
     options: {
       preprintExtra?: string;
       publishedExtra?: string;
+      preprintCitationKey?: string;
+      publishedCitationKey?: string;
     } = {},
   ) {
     const preprintItem = new Zotero.Item("preprint");
@@ -39,6 +41,9 @@ describe("merge", function () {
     preprintItem.setField("url", "https://arxiv.org/abs/1234.5678");
     preprintItem.setField("DOI", "10.48550/arXiv.1234.5678");
     preprintItem.setField("archiveID", "arXiv:1234.5678");
+    if (options.preprintCitationKey !== undefined) {
+      preprintItem.setField("citationKey", options.preprintCitationKey);
+    }
     if (options.preprintExtra !== undefined) {
       preprintItem.setField("extra", options.preprintExtra);
     }
@@ -48,6 +53,9 @@ describe("merge", function () {
     publishedItem.setField("title", "Published title");
     publishedItem.setField("url", "https://example.com/published");
     publishedItem.setField("DOI", "10.1000/published");
+    if (options.publishedCitationKey !== undefined) {
+      publishedItem.setField("citationKey", options.publishedCitationKey);
+    }
     if (options.publishedExtra !== undefined) {
       publishedItem.setField("extra", options.publishedExtra);
     }
@@ -68,6 +76,30 @@ describe("merge", function () {
       "https://arxiv.org/abs/1234.5678",
       "Merged item should keep the preprint URL when configured",
     );
+  });
+
+  it("should keep the preprint citation key when merging", async function () {
+    setPluginPref("merge.reservedKeys", "collections,dateAdded,key,tags");
+    const { preprintItem, publishedItem } = await createMergeItems({
+      preprintCitationKey: "old_preprint_key",
+      publishedCitationKey: "new_published_key",
+    });
+
+    await plugin.api.merge(preprintItem, publishedItem, true);
+
+    const mergedItem = await Zotero.Items.getAsync(preprintItem.id);
+    assert.equal(mergedItem.getField("citationKey"), "old_preprint_key");
+  });
+
+  it("should keep the Zotero item key when custom reserved keys omit it", async function () {
+    setPluginPref("merge.reservedKeys", "collections,dateAdded,tags");
+    const { preprintItem, publishedItem } = await createMergeItems();
+    const preprintKey = preprintItem.key;
+
+    await plugin.api.merge(preprintItem, publishedItem, true);
+
+    const mergedItem = await Zotero.Items.getAsync(preprintItem.id);
+    assert.equal(mergedItem.key, preprintKey);
   });
 
   it("should remove arXiv lines from extra by default", async function () {
