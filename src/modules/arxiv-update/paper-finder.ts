@@ -49,11 +49,11 @@ function normalizeMetadataText(value: string): string {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function matchesTitleAndFirstAuthor(
+function matchesTitleAndAuthors(
   title: string,
   resultTitle: unknown,
-  firstAuthor: string | undefined,
-  resultFirstAuthor: unknown,
+  authors: string[],
+  resultAuthors: unknown[],
 ): boolean {
   if (
     typeof resultTitle !== "string" ||
@@ -61,10 +61,19 @@ function matchesTitleAndFirstAuthor(
   ) {
     return false;
   }
-  if (!firstAuthor || typeof resultFirstAuthor !== "string") return true;
-  return normalizeMetadataText(resultFirstAuthor)
-    .split(/[\s,]+/)
-    .includes(normalizeMetadataText(firstAuthor));
+  const sourceAuthors = authors.map(normalizeMetadataText).filter(Boolean);
+  const candidateAuthors = resultAuthors.filter(
+    (author): author is string => typeof author === "string",
+  );
+  if (!sourceAuthors.length || !candidateAuthors.length) return true;
+  return candidateAuthors.some((candidate) => {
+    const normalizedCandidate = normalizeMetadataText(candidate);
+    return sourceAuthors.some(
+      (author) =>
+        normalizedCandidate === author ||
+        normalizedCandidate.endsWith(` ${author}`),
+    );
+  });
 }
 
 function publishedDOI(doi: unknown): string | undefined {
@@ -202,52 +211,55 @@ export class PaperFinder {
     if (urlHost !== KNOWN_PREPRINT_SERVERS.arxiv) return undefined;
     const dblpAPI = "https://dblp.org/search/publ/api";
     // DBLP sends at most 100 hits per query, ordered by year descending.
-    // A title-only query for a popular paper can match hundreds of records
-    // and even homonymous titles by other authors, so narrow the search with
-    // the first author whenever the item has one.
+    // Prefer a first-author query to narrow popular titles, then retry with
+    // the title alone in case the published version changed author order.
     const firstAuthor = this.item.getCreators()[0]?.lastName;
-    const query = firstAuthor ? `${this.title} ${firstAuthor}` : this.title;
-    ztoolkit.log(`DBLP query: ${query}`);
-    const dblpURL = `${dblpAPI}?q=${encodeURIComponent(query)}&format=json&h=100`;
-    const json = await this.fetch.fetchJSON(dblpURL);
-    const hits = json?.result?.hits?.hit ?? [];
-    ztoolkit.log(`DBLP returned ${hits.length} hits`);
-    for (const hit of hits) {
-      const info = hit?.info;
-      // Remove final `.` in title (idk why dblp has this)
-      const title = info?.title?.replace(/\.$/, "");
-      if (!matchTitle(this.title, title)) continue;
-      // Ignore this DBLP entry if it belongs to CoRR. See also #14
-      if (info.venue === "CoRR") {
-        ztoolkit.log(`DBLP: skipping CoRR record ${info.key}`);
-        continue;
+    const queries = firstAuthor
+      ? [`${this.title} ${firstAuthor}`, this.title]
+      : [this.title];
+    for (const query of queries) {
+      ztoolkit.log(`DBLP query: ${query}`);
+      const dblpURL = `${dblpAPI}?q=${encodeURIComponent(query)}&format=json&h=100`;
+      const json = await this.fetch.fetchJSON(dblpURL);
+      const hits = json?.result?.hits?.hit ?? [];
+      ztoolkit.log(`DBLP returned ${hits.length} hits`);
+      for (const hit of hits) {
+        const info = hit?.info;
+        // Remove final `.` in title (idk why dblp has this)
+        const title = info?.title?.replace(/\.$/, "");
+        if (!matchTitle(this.title, title)) continue;
+        // Ignore this DBLP entry if it belongs to CoRR. See also #14
+        if (info.venue === "CoRR") {
+          ztoolkit.log(`DBLP: skipping CoRR record ${info.key}`);
+          continue;
+        }
+        // Prefer the DOI when DBLP has one: importing by identifier is more
+        // robust than scraping an arbitrary publisher page.
+        if (info.doi && !String(info.doi).toLowerCase().includes("arxiv")) {
+          ztoolkit.log(`DBLP matched ${info.key} via DOI ${info.doi}`);
+          return { doi: info.doi, title: "Published PDF" };
+        }
+        // Prefer electron edition (ee) which points to the official website instead of DBLP
+        let url = info.ee || info.url;
+        if (!url) continue;
+        // Records without a real venue page (e.g. early ICLR) point back to
+        // arXiv itself; updating from them would re-import the preprint.
+        const host = new URL(url).hostname;
+        if (host === "arxiv.org" || host.endsWith(".arxiv.org")) {
+          ztoolkit.log(`DBLP: skipping arXiv-hosted record ${info.key}`);
+          continue;
+        }
+        // openreview.net serves a script-only page behind an anti-bot
+        // challenge, impossible to import headlessly; import from the BibTeX
+        // view of the DBLP record itself instead.
+        if (host === "openreview.net" || host.endsWith(".openreview.net")) {
+          url = `https://dblp.org/rec/${info.key}.html?view=bibtex`;
+        }
+        ztoolkit.log(
+          `DBLP matched ${info.key} (${info.venue} ${info.year}): ${url}`,
+        );
+        return { url, title: "Published PDF" };
       }
-      // Prefer the DOI when DBLP has one: importing by identifier is more
-      // robust than scraping an arbitrary publisher page.
-      if (info.doi && !String(info.doi).toLowerCase().includes("arxiv")) {
-        ztoolkit.log(`DBLP matched ${info.key} via DOI ${info.doi}`);
-        return { doi: info.doi, title: "Published PDF" };
-      }
-      // Prefer electron edition (ee) which points to the official website instead of DBLP
-      let url = info.ee || info.url;
-      if (!url) continue;
-      // Records without a real venue page (e.g. early ICLR) point back to
-      // arXiv itself; updating from them would re-import the preprint.
-      const host = new URL(url).hostname;
-      if (host === "arxiv.org" || host.endsWith(".arxiv.org")) {
-        ztoolkit.log(`DBLP: skipping arXiv-hosted record ${info.key}`);
-        continue;
-      }
-      // openreview.net serves a script-only page behind an anti-bot
-      // challenge, impossible to import headlessly; import from the BibTeX
-      // view of the DBLP record itself instead.
-      if (host === "openreview.net" || host.endsWith(".openreview.net")) {
-        url = `https://dblp.org/rec/${info.key}.html?view=bibtex`;
-      }
-      ztoolkit.log(
-        `DBLP matched ${info.key} (${info.venue} ${info.year}): ${url}`,
-      );
-      return { url, title: "Published PDF" };
     }
     ztoolkit.log(`No published version found on DBLP for "${this.title}"`);
     return undefined;
@@ -286,11 +298,10 @@ export class PaperFinder {
   }
 
   async openAlex(): Promise<PaperIdentifier | undefined> {
-    const firstAuthor = this.item.getCreators()[0]?.lastName;
-    const query = firstAuthor ? `${this.title} ${firstAuthor}` : this.title;
+    const authors = this.item.getCreators().map((creator) => creator.lastName);
     const url =
       "https://api.openalex.org/works?" +
-      `search=${encodeURIComponent(query)}&per-page=10&select=doi,title,type,authorships,primary_location`;
+      `search=${encodeURIComponent(this.title)}&per-page=10&select=doi,title,type,authorships,primary_location`;
     const json = await this.fetch.fetchJSON(url);
     const results = json?.results ?? [];
     for (const result of results) {
@@ -299,11 +310,14 @@ export class PaperFinder {
         !doi ||
         !OPEN_ALEX_PUBLISHED_TYPES.has(result?.type) ||
         result?.primary_location?.is_published !== true ||
-        !matchesTitleAndFirstAuthor(
+        !matchesTitleAndAuthors(
           this.title,
           result?.title,
-          firstAuthor,
-          result?.authorships?.[0]?.author?.display_name,
+          authors,
+          result?.authorships?.map(
+            (authorship: { author?: { display_name?: unknown } }) =>
+              authorship?.author?.display_name,
+          ) ?? [],
         )
       ) {
         continue;
@@ -316,11 +330,10 @@ export class PaperFinder {
   }
 
   async crossref(): Promise<PaperIdentifier | undefined> {
-    const firstAuthor = this.item.getCreators()[0]?.lastName;
-    const query = firstAuthor ? `${this.title} ${firstAuthor}` : this.title;
+    const authors = this.item.getCreators().map((creator) => creator.lastName);
     const url =
       "https://api.crossref.org/works?" +
-      `query.bibliographic=${encodeURIComponent(query)}&rows=10`;
+      `query.bibliographic=${encodeURIComponent(this.title)}&rows=10`;
     const json = await this.fetch.fetchJSON(url);
     const results = json?.message?.items ?? [];
     for (const result of results) {
@@ -328,11 +341,13 @@ export class PaperFinder {
       if (
         !doi ||
         !CROSSREF_PUBLISHED_TYPES.has(result?.type) ||
-        !matchesTitleAndFirstAuthor(
+        !matchesTitleAndAuthors(
           this.title,
           result?.title?.[0],
-          firstAuthor,
-          result?.author?.[0]?.family,
+          authors,
+          result?.author?.map(
+            (author: { family?: unknown }) => author?.family,
+          ) ?? [],
         )
       ) {
         continue;

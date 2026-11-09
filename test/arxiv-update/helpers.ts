@@ -31,17 +31,26 @@ export function resetUpdateSourcePrefs() {
 /** A preprint item whose URL points at a known preprint server. */
 export async function createPreprintItem(
   url = "https://arxiv.org/abs/1234.5678",
-  options: { title?: string; authorLastName?: string } = {},
+  options: {
+    title?: string;
+    authorLastName?: string;
+    authorLastNames?: string[];
+  } = {},
 ) {
   const item = new Zotero.Item("preprint");
   item.setField("title", options.title ?? "Test paper");
   item.setField("url", url);
   await item.saveTx();
-  if (options.authorLastName) {
-    item.setCreator(0, {
-      firstName: "Jane",
-      lastName: options.authorLastName,
-      creatorType: "author",
+  const authorLastNames =
+    options.authorLastNames ??
+    (options.authorLastName ? [options.authorLastName] : []);
+  if (authorLastNames.length) {
+    authorLastNames.forEach((lastName, index) => {
+      item.setCreator(index, {
+        firstName: "Jane",
+        lastName,
+        creatorType: "author",
+      });
     });
     await item.saveTx();
   }

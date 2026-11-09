@@ -465,6 +465,49 @@ describe("paper-finder", function () {
       );
     });
 
+    it("retries by title when the published author order changed", async function () {
+      const title = "Representation Tradeoffs for Hyperbolic Embeddings";
+      const item = await createPreprintItem(
+        "https://arxiv.org/abs/1804.03329",
+        {
+          title,
+          authorLastNames: ["De Sa", "Gu", "Ré", "Sala"],
+        },
+      );
+      const { fetcher, calls } = createFetcher({
+        fetchJSON: async () =>
+          calls.length === 1
+            ? { result: { hits: { hit: [] } } }
+            : {
+                result: {
+                  hits: {
+                    hit: [
+                      {
+                        info: {
+                          key: "conf/icml/SalaDGR18",
+                          title,
+                          venue: "ICML",
+                          year: 2018,
+                          ee: "https://proceedings.mlr.press/v80/sala18a.html",
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+      });
+
+      const paper = await new PaperFinder(item, fetcher).dblp();
+
+      assert.deepEqual(paper, {
+        url: "https://proceedings.mlr.press/v80/sala18a.html",
+        title: "Published PDF",
+      });
+      assert.lengthOf(calls, 2);
+      assert.include(decodeURIComponent(calls[0].url), `${title} De Sa`);
+      assert.include(decodeURIComponent(calls[1].url), `q=${title}&`);
+    });
+
     it("queries with the title only when the item has no authors", async function () {
       const item = await arxivItem();
       const { fetcher, calls } = createFetcher({
@@ -553,25 +596,28 @@ describe("paper-finder", function () {
   });
 
   describe("openAlex", function () {
-    it("finds an exact published work by title and first author", async function () {
+    it("finds a published work when its author order differs", async function () {
       const item = await createPreprintItem(
         "https://arxiv.org/abs/2403.15530",
         {
-          title:
-            "Pixel-GS: Density Control with Pixel-aware Gradient for 3D Gaussian Splatting",
-          authorLastName: "Zhang",
+          title: "Representation Tradeoffs for Hyperbolic Embeddings",
+          authorLastNames: ["De Sa", "Gu", "Ré", "Sala"],
         },
       );
       const { fetcher, calls } = createFetcher({
         fetchJSON: async () => ({
           results: [
             {
-              doi: "https://doi.org/10.1007/978-3-031-72655-2_19",
-              title:
-                "Pixel-GS: Density Control with Pixel-Aware Gradient for 3D Gaussian Splatting",
+              doi: "https://doi.org/10.1000/icml",
+              title: "Representation Tradeoffs for Hyperbolic Embeddings",
               type: "conference-paper",
               primary_location: { is_published: true },
-              authorships: [{ author: { display_name: "Zheng Zhang" } }],
+              authorships: [
+                { author: { display_name: "Frederic Sala" } },
+                { author: { display_name: "Chris De Sa" } },
+                { author: { display_name: "Albert Gu" } },
+                { author: { display_name: "Christopher Re" } },
+              ],
             },
           ],
         }),
@@ -580,7 +626,7 @@ describe("paper-finder", function () {
       const paper = await new PaperFinder(item, fetcher).openAlex();
 
       assert.deepEqual(paper, {
-        doi: "10.1007/978-3-031-72655-2_19",
+        doi: "10.1000/icml",
         title: "Published PDF",
       });
       assert.match(calls[0].url, /^https:\/\/api\.openalex\.org\/works\?/);
@@ -607,13 +653,12 @@ describe("paper-finder", function () {
   });
 
   describe("crossref", function () {
-    it("finds a published work by exact title and first author", async function () {
+    it("finds a published work when its author order differs", async function () {
       const item = await createPreprintItem(
         "https://arxiv.org/abs/2403.15530",
         {
-          title:
-            "Pixel-GS: Density Control with Pixel-aware Gradient for 3D Gaussian Splatting",
-          authorLastName: "Zhang",
+          title: "Representation Tradeoffs for Hyperbolic Embeddings",
+          authorLastNames: ["De Sa", "Gu", "Ré", "Sala"],
         },
       );
       const { fetcher, calls } = createFetcher({
@@ -621,12 +666,15 @@ describe("paper-finder", function () {
           message: {
             items: [
               {
-                DOI: "10.1007/978-3-031-72655-2_19",
-                title: [
-                  "Pixel-GS: Density Control with\u00a0Pixel-Aware Gradient for\u00a03D Gaussian Splatting",
+                DOI: "10.1000/icml",
+                title: ["Representation Tradeoffs for Hyperbolic Embeddings"],
+                type: "proceedings-article",
+                author: [
+                  { family: "Sala" },
+                  { family: "De Sa" },
+                  { family: "Gu" },
+                  { family: "Ré" },
                 ],
-                type: "book-chapter",
-                author: [{ family: "Zhang" }],
               },
             ],
           },
@@ -636,7 +684,7 @@ describe("paper-finder", function () {
       const paper = await new PaperFinder(item, fetcher).crossref();
 
       assert.deepEqual(paper, {
-        doi: "10.1007/978-3-031-72655-2_19",
+        doi: "10.1000/icml",
         title: "Published PDF",
       });
       assert.match(calls[0].url, /^https:\/\/api\.crossref\.org\/works\?/);
