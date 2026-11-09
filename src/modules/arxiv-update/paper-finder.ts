@@ -106,6 +106,32 @@ function publishedURL(url: unknown): string | undefined {
   }
 }
 
+function findPMLRPaperURL(html: string, title: string): string | undefined {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  for (const paper of doc.querySelectorAll(".paper")) {
+    if (
+      normalizeMetadataText(
+        paper.querySelector(".title")?.textContent ?? "",
+      ) !== normalizeMetadataText(title)
+    ) {
+      continue;
+    }
+    let abstractURL: string | undefined;
+    for (const candidate of paper.querySelectorAll(".links a")) {
+      if (
+        candidate instanceof HTMLAnchorElement &&
+        candidate.textContent?.trim().toLowerCase() === "abs"
+      ) {
+        abstractURL = candidate.href;
+        break;
+      }
+    }
+    const url = publishedURL(abstractURL);
+    if (url && new URL(url).hostname === "proceedings.mlr.press") return url;
+  }
+  return undefined;
+}
+
 // Extract the arXiv version (e.g. 3 from "arXiv:1234.5678v3") embedded in a
 // PDF's full text.
 export function extractPDFVersion(fullText: string): number | undefined {
@@ -320,7 +346,7 @@ export class PaperFinder {
     const authors = this.item.getCreators().map((creator) => creator.lastName);
     const url =
       "https://api.openalex.org/works?" +
-      `search=${encodeURIComponent(this.title)}&per-page=10&select=doi,title,type,authorships,primary_location`;
+      `search=${encodeURIComponent(this.title)}&per-page=10&select=doi,title,type,authorships,primary_location,biblio`;
     const json = await this.fetch.fetchJSON(url);
     const results = json?.results ?? [];
     for (const result of results) {
@@ -343,6 +369,32 @@ export class PaperFinder {
       if (doi) {
         ztoolkit.log(`OpenAlex matched "${this.title}" via DOI ${doi}`);
         return { doi, title: "Published PDF" };
+      }
+      const sourceName = result?.primary_location?.raw_source_name;
+      const volume = String(result?.biblio?.volume ?? "");
+      if (
+        typeof sourceName === "string" &&
+        /proceedings of machine learning research/i.test(sourceName) &&
+        /^\d+$/.test(volume)
+      ) {
+        const volumeURL = `https://proceedings.mlr.press/v${volume}/`;
+        try {
+          const index = await this.fetch.fetchText(volumeURL);
+          const paperURL = findPMLRPaperURL(index, this.title);
+          if (paperURL) {
+            ztoolkit.log(
+              `OpenAlex matched "${this.title}" on PMLR: ${paperURL}`,
+            );
+            return { url: paperURL, title: "Published PDF" };
+          }
+          ztoolkit.log(
+            `No exact title match on PMLR volume ${volume} for "${this.title}"`,
+          );
+        } catch (error) {
+          ztoolkit.log(
+            `PMLR volume lookup failed for "${this.title}": ${String(error)}`,
+          );
+        }
       }
       const url = publishedURL(result?.primary_location?.landing_page_url);
       if (url) {

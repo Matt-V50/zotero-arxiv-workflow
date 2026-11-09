@@ -651,7 +651,7 @@ describe("paper-finder", function () {
       assert.isUndefined(await new PaperFinder(item, fetcher).openAlex());
     });
 
-    it("uses the published location when OpenAlex only has the arXiv DOI", async function () {
+    it("finds the exact PMLR page when OpenAlex only has the arXiv DOI", async function () {
       const title = "Representation Tradeoffs for Hyperbolic Embeddings";
       const item = await createPreprintItem(
         "https://arxiv.org/abs/1804.03329",
@@ -660,15 +660,25 @@ describe("paper-finder", function () {
           authorLastNames: ["De Sa", "Gu", "Ré", "Sala"],
         },
       );
-      const { fetcher } = createFetcher({
+      const { fetcher, calls } = createFetcher({
+        fetchText: async () => `
+          <div class="paper">
+            <p class="title">${title}</p>
+            <p class="links">
+              [<a href="https://proceedings.mlr.press/v80/sala18a.html">abs</a>]
+            </p>
+          </div>
+        `,
         fetchJSON: async () => ({
           results: [
             {
               doi: "https://doi.org/10.48550/arXiv.1804.03329",
               title,
               type: "article",
+              biblio: { volume: "80" },
               primary_location: {
                 is_published: true,
+                raw_source_name: "Proceedings of machine learning research",
                 landing_page_url: "https://pubmed.ncbi.nlm.nih.gov/31131375",
               },
               authorships: [
@@ -685,9 +695,14 @@ describe("paper-finder", function () {
       const paper = await new PaperFinder(item, fetcher).openAlex();
 
       assert.deepEqual(paper, {
-        url: "https://pubmed.ncbi.nlm.nih.gov/31131375",
+        url: "https://proceedings.mlr.press/v80/sala18a.html",
         title: "Published PDF",
       });
+      assert.deepEqual(
+        calls.map((call) => call.type),
+        ["json", "text"],
+      );
+      assert.equal(calls[1].url, "https://proceedings.mlr.press/v80/");
     });
   });
 
