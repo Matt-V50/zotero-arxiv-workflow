@@ -650,6 +650,45 @@ describe("paper-finder", function () {
 
       assert.isUndefined(await new PaperFinder(item, fetcher).openAlex());
     });
+
+    it("uses the published location when OpenAlex only has the arXiv DOI", async function () {
+      const title = "Representation Tradeoffs for Hyperbolic Embeddings";
+      const item = await createPreprintItem(
+        "https://arxiv.org/abs/1804.03329",
+        {
+          title,
+          authorLastNames: ["De Sa", "Gu", "Ré", "Sala"],
+        },
+      );
+      const { fetcher } = createFetcher({
+        fetchJSON: async () => ({
+          results: [
+            {
+              doi: "https://doi.org/10.48550/arXiv.1804.03329",
+              title,
+              type: "article",
+              primary_location: {
+                is_published: true,
+                landing_page_url: "https://pubmed.ncbi.nlm.nih.gov/31131375",
+              },
+              authorships: [
+                { author: { display_name: "Christopher De" } },
+                { author: { display_name: "Albert Gu" } },
+                { author: { display_name: "Christopher Ré" } },
+                { author: { display_name: "Frederic Sala" } },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const paper = await new PaperFinder(item, fetcher).openAlex();
+
+      assert.deepEqual(paper, {
+        url: "https://pubmed.ncbi.nlm.nih.gov/31131375",
+        title: "Published PDF",
+      });
+    });
   });
 
   describe("crossref", function () {

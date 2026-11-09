@@ -87,6 +87,25 @@ function publishedDOI(doi: unknown): string | undefined {
     : undefined;
 }
 
+function publishedURL(url: unknown): string | undefined {
+  if (typeof url !== "string") return undefined;
+  try {
+    const parsed = new URL(url);
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      parsed.hostname === "doi.org" ||
+      parsed.hostname.endsWith(".doi.org") ||
+      parsed.hostname === KNOWN_PREPRINT_SERVERS.arxiv ||
+      parsed.hostname.endsWith(".arxiv.org")
+    ) {
+      return undefined;
+    }
+    return parsed.href;
+  } catch {
+    return undefined;
+  }
+}
+
 // Extract the arXiv version (e.g. 3 from "arXiv:1234.5678v3") embedded in a
 // PDF's full text.
 export function extractPDFVersion(fullText: string): number | undefined {
@@ -307,7 +326,6 @@ export class PaperFinder {
     for (const result of results) {
       const doi = publishedDOI(result?.doi);
       if (
-        !doi ||
         !OPEN_ALEX_PUBLISHED_TYPES.has(result?.type) ||
         result?.primary_location?.is_published !== true ||
         !matchesTitleAndAuthors(
@@ -322,8 +340,15 @@ export class PaperFinder {
       ) {
         continue;
       }
-      ztoolkit.log(`OpenAlex matched "${this.title}" via DOI ${doi}`);
-      return { doi, title: "Published PDF" };
+      if (doi) {
+        ztoolkit.log(`OpenAlex matched "${this.title}" via DOI ${doi}`);
+        return { doi, title: "Published PDF" };
+      }
+      const url = publishedURL(result?.primary_location?.landing_page_url);
+      if (url) {
+        ztoolkit.log(`OpenAlex matched "${this.title}" via URL ${url}`);
+        return { url, title: "Published PDF" };
+      }
     }
     ztoolkit.log(`No published version found on OpenAlex for "${this.title}"`);
     return undefined;
