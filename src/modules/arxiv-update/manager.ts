@@ -31,6 +31,26 @@ function supplementConferenceMetadata(item: Zotero.Item, doc: Document) {
   );
 }
 
+function applyPaperMetadata(item: Zotero.Item, paper: PaperIdentifier) {
+  if (!paper.itemType) return;
+
+  const expectedTypeID = Zotero.ItemTypes.getID(paper.itemType);
+  if (expectedTypeID === false) {
+    throw new Error(`Unknown Zotero item type: ${paper.itemType}`);
+  }
+  if (item.itemTypeID !== expectedTypeID) {
+    const previousType = item.itemType;
+    item.setType(expectedTypeID);
+    ztoolkit.log(
+      `Changed imported item type from ${previousType} to ${paper.itemType}`,
+    );
+  }
+
+  if (paper.conferenceName && !item.getField("conferenceName")) {
+    item.setField("conferenceName", paper.conferenceName);
+  }
+}
+
 function getOpenReviewForumID(url: string): string | undefined {
   try {
     const parsed = new URL(url);
@@ -269,15 +289,9 @@ async function createItemByZotero(
     ? pane.getSelectedLibraryIDs()[0]
     : pane.getSelectedLibraryID();
 
-  // ------------------------------------------------------------
-  // DOI path
-  //
-  // Priority 1:
-  // DOI -> official publisher landing page -> Web Translator
-  //
-  // Fallback:
-  // DOI -> Zotero Search Translator
-  // ------------------------------------------------------------
+  // Known conference papers use Zotero's DOI metadata translator first,
+  // because publisher landing pages may only expose generic webpage metadata.
+  // Other DOI results retain the publisher-page-first behavior.
 
   if (paper.doi) {
     const doi = paper.doi
@@ -285,6 +299,24 @@ async function createItemByZotero(
       .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "");
 
     const doiURL = encodeURI(`https://doi.org/${doi}`);
+
+    if (paper.itemType === "conferencePaper") {
+      ztoolkit.log(
+        `Trying DOI Search Translator first for conference paper ${doi}`,
+      );
+      try {
+        const item = await translateDOI(doi, libraryID, collections);
+        if (item) return item;
+        ztoolkit.log(
+          `DOI Search Translator returned no items for ${doi}; trying publisher Web Translator`,
+        );
+      } catch (err) {
+        ztoolkit.log(
+          `DOI Search Translator failed for conference paper ${doi}; trying publisher Web Translator`,
+        );
+        ztoolkit.log(err);
+      }
+    }
 
     ztoolkit.log(`Trying publisher Web Translator first for DOI ${doi}`);
 
@@ -457,6 +489,7 @@ export class UpdateManager {
       );
       const journalItem = await this.createItem(paper, collections);
       if (!journalItem) return reportProgress("download-error");
+      applyPaperMetadata(journalItem, paper);
       journalItem.saveTx();
 
       let hasErrorDownloadingPDF = false;

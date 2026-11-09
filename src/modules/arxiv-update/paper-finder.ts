@@ -5,6 +5,8 @@ export interface PaperIdentifier {
   doi?: string;
   url?: string;
   title: string;
+  itemType?: "conferencePaper";
+  conferenceName?: string;
 }
 
 const KNOWN_PREPRINT_SERVERS = {
@@ -368,6 +370,19 @@ export class PaperFinder {
       }
       if (doi) {
         ztoolkit.log(`OpenAlex matched "${this.title}" via DOI ${doi}`);
+        if (result?.type === "conference-paper") {
+          const conferenceName =
+            result?.primary_location?.raw_source_name ??
+            result?.primary_location?.source?.display_name;
+          return {
+            doi,
+            title: "Published PDF",
+            itemType: "conferencePaper",
+            ...(typeof conferenceName === "string" && conferenceName.trim()
+              ? { conferenceName: conferenceName.trim() }
+              : {}),
+          };
+        }
         return { doi, title: "Published PDF" };
       }
       const sourceName = result?.primary_location?.raw_source_name;
@@ -430,6 +445,18 @@ export class PaperFinder {
         continue;
       }
       ztoolkit.log(`Crossref matched "${this.title}" via DOI ${doi}`);
+      if (result?.type === "proceedings-article") {
+        const conferenceName =
+          result?.event?.name ?? result?.["container-title"]?.[0];
+        return {
+          doi,
+          title: "Published PDF",
+          itemType: "conferencePaper",
+          ...(typeof conferenceName === "string" && conferenceName.trim()
+            ? { conferenceName: conferenceName.trim() }
+            : {}),
+        };
+      }
       return { doi, title: "Published PDF" };
     }
     ztoolkit.log(`No published version found on Crossref for "${this.title}"`);

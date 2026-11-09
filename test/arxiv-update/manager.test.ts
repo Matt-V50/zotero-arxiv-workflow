@@ -96,6 +96,56 @@ describe("update-manager", function () {
     assert.equal(merged.getDisplayTitle(), "Published title");
   });
 
+  it("converts publisher webpage metadata to a conference paper", async function () {
+    setPluginPref("downloadJournalPDF", false);
+    const title = "Segment Anything in High Quality";
+    const item = await createPreprintItem("https://arxiv.org/abs/2306.01567", {
+      title,
+    });
+    const { fetcher } = createFetcher({
+      fetchJSON: async (url) =>
+        url.startsWith("https://api.openalex.org/")
+          ? {
+              results: [
+                {
+                  doi: "https://doi.org/10.52202/075280-1303",
+                  title,
+                  type: "conference-paper",
+                  primary_location: {
+                    is_published: true,
+                    raw_source_name:
+                      "Advances in Neural Information Processing Systems 36",
+                  },
+                  authorships: [],
+                },
+              ],
+            }
+          : {},
+    });
+    const { queue, manager } = createUpdateManager({
+      fetcher,
+      createItem: async (paper) => {
+        const webpage = new Zotero.Item("webpage");
+        webpage.setField("title", title);
+        webpage.setField("DOI", paper.doi ?? "");
+        await webpage.saveTx();
+        return webpage;
+      },
+    });
+
+    manager.createUpdateTasks([item]);
+    await queue.onIdle();
+
+    assert.equal(manager.getRows()[0].status, "updated");
+    const merged = await getItem(item.id);
+    assert.equal(merged.itemType, "conferencePaper");
+    assert.equal(merged.getField("DOI"), "10.52202/075280-1303");
+    assert.equal(
+      merged.getField("conferenceName"),
+      "Advances in Neural Information Processing Systems 36",
+    );
+  });
+
   it("reports up-to-date when no source locates a published version", async function () {
     setPluginPref("downloadJournalPDF", false);
     const item = await createPreprintItem();

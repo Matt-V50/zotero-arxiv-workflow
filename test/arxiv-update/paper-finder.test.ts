@@ -611,7 +611,10 @@ describe("paper-finder", function () {
               doi: "https://doi.org/10.1000/icml",
               title: "Representation Tradeoffs for Hyperbolic Embeddings",
               type: "conference-paper",
-              primary_location: { is_published: true },
+              primary_location: {
+                is_published: true,
+                raw_source_name: "NeurIPS",
+              },
               authorships: [
                 { author: { display_name: "Frederic Sala" } },
                 { author: { display_name: "Chris De Sa" } },
@@ -628,6 +631,8 @@ describe("paper-finder", function () {
       assert.deepEqual(paper, {
         doi: "10.1000/icml",
         title: "Published PDF",
+        itemType: "conferencePaper",
+        conferenceName: "NeurIPS",
       });
       assert.match(calls[0].url, /^https:\/\/api\.openalex\.org\/works\?/);
       assert.include(calls[0].url, "search=");
@@ -723,6 +728,7 @@ describe("paper-finder", function () {
                 DOI: "10.1000/icml",
                 title: ["Representation Tradeoffs for Hyperbolic Embeddings"],
                 type: "proceedings-article",
+                event: { name: "NeurIPS" },
                 author: [
                   { family: "Sala" },
                   { family: "De Sa" },
@@ -740,6 +746,8 @@ describe("paper-finder", function () {
       assert.deepEqual(paper, {
         doi: "10.1000/icml",
         title: "Published PDF",
+        itemType: "conferencePaper",
+        conferenceName: "NeurIPS",
       });
       assert.match(calls[0].url, /^https:\/\/api\.crossref\.org\/works\?/);
       assert.include(calls[0].url, "query.bibliographic=");
